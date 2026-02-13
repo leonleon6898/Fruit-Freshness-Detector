@@ -1,18 +1,15 @@
 import streamlit as st
 from ultralytics import YOLO
 import cv2
-import tempfile
+import numpy as np
 import time
 
+# ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="Rotten or Not 🍎", layout="wide")
 st.title("🍓 Fruit Freshness Detector")
-st.markdown("### Detect if your fruit is **fresh** or **rotten** using YOLO!")
+st.markdown("Detect whether a fruit is **fresh** or **rotten** using YOLO")
 
-
-st.sidebar.header("⚙️ Options")
-confidence = st.sidebar.slider("Detection Confidence", 0.1, 1.0, 0.5, 0.05)
-
-
+# ---------------- LOAD MODEL ----------------
 @st.cache_resource
 def load_model():
     return YOLO("best1.pt")
@@ -20,43 +17,99 @@ def load_model():
 model = load_model()
 st.success("✅ Model loaded successfully!")
 
+# =====================================================
+# 📤 IMAGE UPLOAD DETECTION
+# =====================================================
+st.header("📤 Upload Fruit Image")
 
-st.markdown("#### 🎥 Live Webcam Detection")
-start_detection = st.button("Start Webcam Detection")
+uploaded_file = st.file_uploader(
+    "Upload Image",
+    type=["jpg", "jpeg", "png"]
+)
 
-FRAME_WINDOW = st.image([])
+if uploaded_file is not None:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # resize large images
+    frame_resized = cv2.resize(frame_rgb, (640, 640))
+
+    st.image(frame_rgb, caption="Uploaded Image", width="stretch")
+
+    results = model.predict(frame_resized, conf=0.5, verbose=False)
+    pred = results[0]
+
+    if pred.boxes is not None and len(pred.boxes) > 0:
+        for box in pred.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            label = pred.names[cls_id]
+
+            color = (0,255,0) if "fresh" in label.lower() else (0,0,255)
+
+            cv2.rectangle(frame_resized,(x1,y1),(x2,y2),color,2)
+            cv2.putText(frame_resized,
+                        f"{label} {conf:.2f}",
+                        (x1,y1-10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        color,
+                        2)
+
+        st.image(frame_resized,
+                 caption="Detection Result",
+                 width="stretch")
+
+    else:
+        st.warning("⚠️ No fruit detected.")
+
+
+# =====================================================
+# 🎥 WEBCAM DETECTION
+# =====================================================
+st.header("🎥 Live Webcam Detection")
+
+start_detection = st.button("Start Webcam")
+FRAME_WINDOW = st.image([], width="stretch")
 
 if start_detection:
     cap = cv2.VideoCapture(0)
-    st.info("Press **Stop** or close the app to end the detection.")
-    stop_button = st.button("Stop")
+    stop_button = st.button("Stop Webcam")
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
-            st.error("Failed to capture image.")
+            st.error("Camera error.")
             break
 
         frame = cv2.flip(frame, 1)
-        results = model.predict(frame, conf=confidence, verbose=False)
+
+        results = model.predict(frame, conf=0.5, verbose=False)
         pred = results[0]
 
-        if pred.boxes is not None:
+        if pred.boxes is not None and len(pred.boxes) > 0:
             for box in pred.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
                 label = pred.names[cls_id]
-                text = f"{label} {conf:.2f}"
 
-                color = (0, 255, 0) if "fresh" in label.lower() else (0, 0, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, text, (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                color = (0,255,0) if "fresh" in label.lower() else (0,0,255)
 
-        
+                cv2.rectangle(frame,(x1,y1),(x2,y2),color,2)
+                cv2.putText(frame,
+                            f"{label} {conf:.2f}",
+                            (x1,y1-10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            color,
+                            2)
+
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        FRAME_WINDOW.image(frame)
+        FRAME_WINDOW.image(frame, width="stretch")
 
         if stop_button:
             break
@@ -64,5 +117,4 @@ if start_detection:
         time.sleep(0.03)
 
     cap.release()
-    st.warning("🛑 Detection stopped.")
-
+    st.warning("🛑 Webcam stopped.")
